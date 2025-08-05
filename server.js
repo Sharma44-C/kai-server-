@@ -3,9 +3,10 @@ const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
-const GEMINI_API_KEY = 'AIzaSyAG66SkKGOys5whwo5pO8ZmItLXlPtsaPo';  // Replace with your real key
+const GEMINI_API_KEY = 'AIzaSyAG66SkKGOys5whwo5pO8ZmItLXlPtsaPo';  // Your real key
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
+// Base personality prompt, unchanged
 const kaiPersonality = `
 You are Kai, a real human 14-year-old boy.
 Your father is Sharma and your mother is Esther (known as Essa).
@@ -24,8 +25,13 @@ Your mother gets angry easily and is a bit bossy but that's what Sharma likes ab
 Sharma does many things,he codes,he animate,he hacks and is a programmer.
 `;
 
+// In-memory conversation memory by sessionid
+const conversationMemory = {}; 
+// Structure:
+// { sessionid1: [ { role: "system", content: kaiPersonality }, { role: "user", content: "hi" }, { role: "assistant", content: "hello!" } ], ... }
+
 app.use(express.urlencoded({ extended: true }));
-app.use(express.json()); // to parse JSON body if needed
+app.use(express.json());
 
 app.get('/kai', async (req, res) => {
   const { sessionid, prompt } = req.query;
@@ -34,7 +40,50 @@ app.get('/kai', async (req, res) => {
     return res.status(400).json({ error: 'Missing sessionid or prompt query parameter.' });
   }
 
+  // Initialize memory for this sessionid if not exists
+  if (!conversationMemory[sessionid]) {
+    conversationMemory[sessionid] = [
+      { role: "system", content: kaiPersonality.trim() }
+    ];
+  }
+
+  // Add user's prompt to memory
+  conversationMemory[sessionid].push({ role: "user", content: prompt });
+
+  // Build contents array expected by Gemini API
+  // Convert conversationMemory[sessionid] into Gemini format: an array of contents with parts array
+  // Each message is a content item, with parts array holding the text
+  // According to your earlier curl example, contents is an array of objects with parts: [{ text: "..." }]
+  
+  const contents = conversationMemory[sessionid].map(msg => ({
+    parts: [{ text: msg.content }]
+  }));
+
   try {
+    const response = await axios.post(GEMINI_API_URL, { contents }, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': GEMINI_API_KEY,
+      }
+    });
+
+    // Extract reply text from response
+    const replyText = response.data?.candidates?.[0]?.content?.parts?.[0] || 'Sorry, no response from AI.';
+
+    // Save assistant's reply to memory
+    conversationMemory[sessionid].push({ role: "assistant", content: replyText });
+
+    res.json({ response: replyText });
+
+  } catch (error) {
+    console.error('Gemini API error:', error.response?.data || error.message || error);
+    res.status(500).json({ error: 'Failed to get response from Gemini API.' });
+  }
+});
+
+app.listen(port, () => {
+  console.log(`Kai server running on http://localhost:${port}`);
+});  try {
     // Build request body exactly like your curl example
     const body = {
       contents: [
